@@ -1,0 +1,160 @@
+{
+  "$note": "Build sheet for the 'Mem0 with Dashboard' Railway template. Regenerate from this file if the published template is ever lost. Every non-obvious choice below carries a $note with the evidence behind it.",
+  "$sourceProject": {
+    "name": "mem0-source",
+    "projectId": "d3fa6061-630a-4849-ba33-cd522088a635",
+    "environmentId": "be017f5d-d487-4ec5-82bf-65eebf344003",
+    "workspaceId": "fc4796db-2c6c-4354-a564-d4a1d900af53",
+    "workspaceName": "Auromations"
+  },
+  "$upstream": {
+    "repo": "https://github.com/mem0ai/mem0",
+    "pinnedRef": "v2.0.17",
+    "note": "The server directory is byte identical between tag v2.0.17 and main at b05dc27 (git diff --stat v2.0.17 HEAD -- server is empty), so pinning costs nothing.",
+    "imagesBuiltBy": "https://github.com/hmseeb/mem0-railway",
+    "whyOwnImages": "mem0/mem0-api-server:latest was last pushed 2025-09-10 and its manifest lists linux/arm64 only. Railway runs amd64, so upstream's image cannot start there at all. test/manifest_test.sh asserts this against both images and fails on upstream's."
+  },
+  "services": {
+    "pgvector": {
+      "$note": "Postgres with the vector extension. One database serves both the application tables and the memory vectors, because upstream's split relies on mounting init-db.sh into the postgres container, which Railway cannot do. APP_DB_NAME=postgres on the api service collapses the two. The incumbent mem0 template does the same, so this is proven in production.",
+      "icon": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/postgres.svg",
+      "source": { "image": "pgvector/pgvector:pg17" },
+      "deploy": {
+        "startCommand": null,
+        "healthcheckPath": null,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10
+      },
+      "volumeMounts": { "mountPath": "/var/lib/postgresql/data" },
+      "variables": {
+        "POSTGRES_USER": { "defaultValue": "postgres", "description": "Database username" },
+        "POSTGRES_DB": { "defaultValue": "postgres", "description": "Database name" },
+        "POSTGRES_PASSWORD": {
+          "defaultValue": "${{secret(32)}}",
+          "description": "Database password, generated per deploy"
+        },
+        "PGDATA": {
+          "defaultValue": "/var/lib/postgresql/data/pgdata",
+          "$note": "A subdirectory of the mount, not the mount itself. Railway volumes ship with a lost+found directory at the root and initdb refuses to touch a non-empty directory.",
+          "description": "Data directory, a subdirectory of the volume mount"
+        },
+        "RAILWAY_RUN_UID": {
+          "defaultValue": "0",
+          "$note": "Postgres needs to own its data directory on the mounted volume.",
+          "description": "Run as root so postgres can own the volume"
+        }
+      }
+    },
+
+    "mem0": {
+      "$note": "The API server. No start command on purpose: Railway execs start commands raw and discards the image entrypoint, and the entrypoint is what runs the database migrations and starts the dual-stack listener. Setting one here silently reverts the two fixes this image exists for.",
+      "icon": "https://raw.githubusercontent.com/mem0ai/mem0/main/docs/logo/favicon.png",
+      "source": { "image": "ghcr.io/hmseeb/mem0-api:latest" },
+      "deploy": {
+        "startCommand": null,
+        "healthcheckPath": "/auth/setup-status",
+        "$noteHealthcheck": "This endpoint counts rows in a migrated table, so a 200 proves the database is reachable and migrations applied. A static route would go green while the app was unusable.",
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10
+      },
+      "volumeMounts": {
+        "mountPath": "/app/history",
+        "$note": "Holds the sqlite memory-change history and the telemetry state file. Without a volume both reset on every redeploy."
+      },
+      "networking": { "serviceDomains": { "targetPort": 8000 } },
+      "variables": {
+        "PORT": {
+          "defaultValue": "8000",
+          "$note": "Pinned because Railway injects PORT=8080 on image services by default, which would drift off the port the public domain targets.",
+          "description": "Port the API listens on"
+        },
+        "POSTGRES_HOST": {
+          "defaultValue": "${{pgvector.RAILWAY_PRIVATE_DOMAIN}}",
+          "description": "Private hostname of the database service"
+        },
+        "POSTGRES_PORT": { "defaultValue": "5432", "description": "Database port" },
+        "POSTGRES_USER": { "defaultValue": "${{pgvector.POSTGRES_USER}}", "description": "Database username" },
+        "POSTGRES_PASSWORD": { "defaultValue": "${{pgvector.POSTGRES_PASSWORD}}", "description": "Database password" },
+        "POSTGRES_DB": { "defaultValue": "${{pgvector.POSTGRES_DB}}", "description": "Database name" },
+        "APP_DB_NAME": {
+          "defaultValue": "postgres",
+          "$note": "Points the application tables at the same database as the vectors. See the pgvector note above.",
+          "description": "Database holding accounts and API keys"
+        },
+        "POSTGRES_COLLECTION_NAME": { "defaultValue": "memories", "description": "Table holding memory vectors" },
+        "JWT_SECRET": {
+          "defaultValue": "${{secret(48)}}",
+          "$note": "The server raises at import time if this is missing while auth is enabled, so it can never be optional.",
+          "description": "Signing key for login sessions, generated per deploy"
+        },
+        "OPENAI_API_KEY": {
+          "isOptional": false,
+          "defaultValue": "",
+          "$note": "The only thing the deployer must supply. Memory extraction and embedding both call OpenAI; there is no bundled local model.",
+          "description": "Your OpenAI API key. Memories are extracted and embedded through it."
+        },
+        "DASHBOARD_URL": {
+          "defaultValue": "https://${{dashboard.RAILWAY_PUBLIC_DOMAIN}}",
+          "$note": "Sets the only allowed browser origin. The dashboard is served from its own address, so without this every dashboard request is blocked by the browser.",
+          "description": "Address the dashboard is served from, used as the allowed browser origin"
+        },
+        "HISTORY_DB_PATH": {
+          "defaultValue": "/app/history/history.db",
+          "description": "Memory change history file, on the volume"
+        },
+        "MEM0_DEFAULT_LLM_MODEL": {
+          "defaultValue": "gpt-5-mini",
+          "description": "Model used to extract memories from conversations"
+        },
+        "MEM0_DEFAULT_EMBEDDER_MODEL": {
+          "defaultValue": "text-embedding-3-small",
+          "description": "Model used to embed memories for search"
+        },
+        "MEM0_TELEMETRY": {
+          "defaultValue": "true",
+          "$note": "Upstream sends at most two anonymous events per install, on first admin creation and on finishing the setup wizard. Left at upstream's default rather than silently flipped, but surfaced so deployers can see and change it.",
+          "description": "Anonymous usage events to mem0. Set to false to opt out."
+        }
+      }
+    },
+
+    "dashboard": {
+      "$note": "The web interface. Also no start command, for a different reason: the browser-facing API address is compiled into the javascript as a literal placeholder and swapped by the image entrypoint at boot. Replacing the entrypoint leaves every browser calling a host named after the setting.",
+      "icon": "https://raw.githubusercontent.com/mem0ai/mem0/main/docs/logo/favicon.png",
+      "source": { "image": "ghcr.io/hmseeb/mem0-dashboard:latest" },
+      "deploy": {
+        "startCommand": null,
+        "healthcheckPath": "/api/health",
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10
+      },
+      "networking": { "serviceDomains": { "targetPort": 3000 } },
+      "variables": {
+        "PORT": {
+          "defaultValue": "3000",
+          "$note": "Same reason as the api service. Next.js honours PORT, so an injected 8080 would move the listener off the port the domain targets.",
+          "description": "Port the dashboard listens on"
+        },
+        "NEXT_PUBLIC_API_URL": {
+          "defaultValue": "https://${{mem0.RAILWAY_PUBLIC_DOMAIN}}",
+          "$note": "Read by the browser, so it has to be the public address, not the private one.",
+          "description": "Public address of the API, used by the browser"
+        },
+        "API_INTERNAL_URL": {
+          "defaultValue": "http://${{mem0.RAILWAY_PRIVATE_DOMAIN}}:8000",
+          "$note": "Server-side calls take the private network instead of going out and back through the public edge. Requires the API to answer over IPv6, which is why the image binds a dual-stack socket.",
+          "description": "Private address of the API, used for server side calls"
+        },
+        "NEXT_PUBLIC_INSTANCE_NAME": {
+          "defaultValue": "Mem0",
+          "description": "Name shown in the dashboard header"
+        }
+      }
+    }
+  },
+  "$deployerJourney": [
+    "Deploy, supply an OpenAI key, wait for both services to go green.",
+    "Open the dashboard address and complete the setup form. The first account created becomes the only admin; registration closes immediately afterwards.",
+    "Create an API key from the dashboard and point a mem0 client at the API address."
+  ]
+}
