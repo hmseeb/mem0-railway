@@ -1,0 +1,42 @@
+# mem0 API server, built for Railway.
+#
+# Upstream publishes mem0/mem0-api-server but it is arm64 only and eleven months
+# stale, so it cannot run on Railway at all (test/manifest_test.sh proves it).
+# This builds the same server from a pinned release tag with three fixes:
+#   1. psycopg[binary], because the slim base has no postgres client library and
+#      upstream's requirements pull the source-only build.
+#   2. migrations run at boot instead of never.
+#   3. no --reload, and the listener is dual-stack so Railway's IPv6-only
+#      private network can reach it.
+
+FROM alpine:3.21 AS source
+ARG MEM0_REF=v2.0.17
+RUN apk add --no-cache curl tar
+RUN curl -fsSL "https://codeload.github.com/mem0ai/mem0/tar.gz/refs/tags/${MEM0_REF}" -o /tmp/src.tgz \
+ && mkdir -p /src \
+ && tar -xzf /tmp/src.tgz -C /src --strip-components=1
+
+FROM python:3.12-slim
+WORKDIR /app
+
+COPY --from=source /src/server/requirements.txt ./requirements.txt
+# psycopg[binary] ships its own copy of the postgres client library. Without it
+# the pgvector store fails to import at request time, not at boot, so the app
+# looks healthy and every memory call fails.
+RUN pip install --no-cache-dir -r requirements.txt "psycopg[binary]>=3.2.8"
+
+COPY --from=source /src/server/ ./
+COPY serve.py ./serve.py
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /app/history
+
+ENV PYTHONUNBUFFERED=1 \
+    HISTORY_DB_PATH=/app/history/history.db
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+# Deliberately empty. The entrypoint builds the uvicorn command so it can honour
+# PORT. A Railway start command would replace this and skip migrations, so the
+# template sets no start command for this service.
+CMD []

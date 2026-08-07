@@ -1,0 +1,66 @@
+# mem0 web dashboard, built for Railway.
+#
+# Same structure as upstream's dashboard Dockerfile, with the source pinned to a
+# release tag and the listener switched to dual stack. The entrypoint is the
+# load-bearing part: the browser-facing API address is compiled into the
+# javascript as a literal placeholder and swapped for the real value at start.
+# Setting a Railway start command would replace that entrypoint and leave every
+# browser calling a host named after the setting.
+
+FROM alpine:3.21 AS source
+ARG MEM0_REF=v2.0.17
+RUN apk add --no-cache curl tar
+RUN curl -fsSL "https://codeload.github.com/mem0ai/mem0/tar.gz/refs/tags/${MEM0_REF}" -o /tmp/src.tgz \
+ && mkdir -p /src \
+ && tar -xzf /tmp/src.tgz -C /src --strip-components=1
+
+FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+FROM base AS deps
+# pnpm-workspace.yaml carries upstream's security overrides (patched axios,
+# prismjs, form-data and friends). Upstream's own Dockerfile does not copy it,
+# so their image installs the unpatched versions. Copying it also makes the
+# frozen install agree with the lockfile.
+COPY --from=source /src/server/dashboard/package.json \
+                   /src/server/dashboard/pnpm-lock.yaml \
+                   /src/server/dashboard/pnpm-workspace.yaml ./
+RUN corepack enable pnpm && pnpm install --frozen-lockfile
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=source /src/server/dashboard/ ./
+
+ENV NEXT_TELEMETRY_DISABLED=1
+# Placeholders, replaced at runtime by entrypoint.sh.
+ENV NEXT_PUBLIC_API_URL=NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_INSTANCE_NAME=NEXT_PUBLIC_INSTANCE_NAME
+
+RUN npm run build
+
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=source --chown=nextjs:nodejs /src/server/dashboard/entrypoint.sh /home/nextjs/entrypoint.sh
+RUN chmod +x /home/nextjs/entrypoint.sh
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT=3000
+# Dual stack, so Railway's IPv6-only private network can reach it.
+ENV HOSTNAME="::"
+
+ENTRYPOINT ["/home/nextjs/entrypoint.sh"]
+CMD ["node", "server.js"]
