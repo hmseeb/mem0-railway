@@ -62,16 +62,19 @@ form. That first account is the admin, and registration closes as soon as it is
 created. Nobody else can claim your instance afterwards. There are no default
 credentials to rotate, because none are seeded.
 
-**Connecting an agent.** Create an API key in the dashboard, then point a mem0
-client at the API service address:
+**Connecting an agent.** Create an API key in the dashboard and send it in an
+`X-API-Key` header. mem0's own `MemoryClient` package will not work against a
+self hosted server, because it sends a differently shaped header and checks in
+with mem0's hosted service on startup. Use plain HTTP:
 
-```python
-from mem0 import MemoryClient
-
-client = MemoryClient(api_key="mem0_...", host="https://your-api.up.railway.app")
-client.add([{"role": "user", "content": "I am allergic to shellfish"}], user_id="alice")
-client.search("what should I avoid ordering?", user_id="alice")
+```bash
+curl -X POST https://your-api.up.railway.app/memories \
+  -H "X-API-Key: m0sk_..." \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"I am allergic to shellfish"}],"user_id":"alice"}'
 ```
+
+The full endpoint list is on the API's own `/docs` page.
 
 **Changing models.** `MEM0_DEFAULT_LLM_MODEL` decides what is worth remembering
 and `MEM0_DEFAULT_EMBEDDER_MODEL` powers search. Anthropic and Gemini are

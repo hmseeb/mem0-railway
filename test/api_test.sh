@@ -141,6 +141,16 @@ case "$KEY" in
   *) fail "an api key can be issued" "a response containing a key field" "$KEY" ;;
 esac
 
+# 6b. Issued keys travel in an X-API-Key header, not as a bearer token. Getting
+#     this wrong reads as a broken key rather than a wrong header, so pin it.
+APIKEY=$(printf '%s' "$KEY" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')
+KEYCODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/configure" -H "X-API-Key: $APIKEY")
+if [ "$KEYCODE" = "200" ]; then
+  pass "an issued api key authenticates through the X-API-Key header"
+else
+  fail "an issued api key authenticates through the X-API-Key header" "http 200" "http $KEYCODE"
+fi
+
 # 7. Authenticated memory listing works, which forces the pgvector collection
 #    table into existence without calling an embedding provider.
 AUTHED=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/memories?user_id=contract-test" \

@@ -31,29 +31,38 @@ bundled local model, so nothing works without it.
 
 ## Using it from code
 
-```python
-from mem0 import MemoryClient
-
-client = MemoryClient(
-    api_key="mem0_...",                        # from the dashboard
-    host="https://your-api.up.railway.app",    # the mem0 service address
-)
-
-client.add(
-    [{"role": "user", "content": "I am allergic to shellfish"}],
-    user_id="alice",
-)
-client.search("what should I avoid ordering?", user_id="alice")
-```
-
-Or straight over HTTP:
+Keys go in an `X-API-Key` header. Note that mem0's own `MemoryClient` will not
+work here: it sends a differently shaped header and checks in with mem0's hosted
+service on startup. Talk to your server over plain HTTP instead.
 
 ```bash
 curl -X POST https://your-api.up.railway.app/memories \
-  -H "Authorization: Bearer mem0_..." \
+  -H "X-API-Key: m0sk_..." \
   -H 'Content-Type: application/json' \
   -d '{"messages":[{"role":"user","content":"I am allergic to shellfish"}],"user_id":"alice"}'
+
+curl "https://your-api.up.railway.app/search" \
+  -H "X-API-Key: m0sk_..." \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"what should I avoid ordering?","user_id":"alice"}'
 ```
+
+```python
+import httpx
+
+mem0 = httpx.Client(
+    base_url="https://your-api.up.railway.app",
+    headers={"X-API-Key": "m0sk_..."},
+)
+
+mem0.post("/memories", json={
+    "messages": [{"role": "user", "content": "I am allergic to shellfish"}],
+    "user_id": "alice",
+})
+mem0.post("/search", json={"query": "what should I avoid ordering?", "user_id": "alice"})
+```
+
+The full endpoint list is on the API's own `/docs` page.
 
 ## Settings worth knowing
 
