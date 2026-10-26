@@ -51,7 +51,9 @@ and the upstream image does not do.
 
 **What you need before deploying.** An OpenAI API key. Memory extraction and
 embedding both call OpenAI and there is no bundled local model, so memory writes
-fail without one. Everything else is generated for you.
+fail without one. Everything else is generated for you. Prefer Gemini? After
+deploying, an admin can switch the LLM and embedder to Gemini (or the LLM alone
+to Anthropic) with a `POST /configure`; the choice persists across redeploys.
 
 **First boot.** Migrations run before the server starts. If Postgres is not
 ready yet the API retries every two seconds for up to a minute, so a short spell
