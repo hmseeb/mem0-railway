@@ -151,6 +151,14 @@ else
   fail "an issued api key authenticates through the X-API-Key header" "http 200" "http $KEYCODE"
 fi
 
+# 6c. Every provider the server advertises as bundled actually imports. Upstream's
+#     requirements omit google-genai, so gemini was listed but died on /configure.
+if docker exec "$API" python -c "from google import genai; import anthropic, openai" 2>/dev/null; then
+  pass "bundled gemini, anthropic and openai providers import"
+else
+  fail "bundled gemini, anthropic and openai providers import" "imports succeed" "ImportError"
+fi
+
 # 7. Authenticated memory listing works, which forces the pgvector collection
 #    table into existence without calling an embedding provider.
 AUTHED=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/memories?user_id=contract-test" \

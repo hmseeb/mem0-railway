@@ -23,7 +23,10 @@ COPY --from=source /src/server/requirements.txt ./requirements.txt
 # psycopg[binary] ships its own copy of the postgres client library. Without it
 # the pgvector store fails to import at request time, not at boot, so the app
 # looks healthy and every memory call fails.
-RUN pip install --no-cache-dir -r requirements.txt "psycopg[binary]>=3.2.8"
+# google-genai: mem0's gemini provider imports `from google import genai`, but
+# upstream's requirements only install the older google-generativeai, so the
+# advertised gemini provider fails with ImportError on /configure.
+RUN pip install --no-cache-dir -r requirements.txt "psycopg[binary]>=3.2.8" "google-genai>=1.0,<2.0"
 
 COPY --from=source /src/server/ ./
 COPY serve.py ./serve.py
